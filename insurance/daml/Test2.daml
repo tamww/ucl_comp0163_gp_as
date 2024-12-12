@@ -115,7 +115,7 @@ _completed_investigation <- submit police
       with
         decision = False
 
-_completed_subrogation <- submit police
+_completed_subrogation <- submit subrogationService
   do exerciseCmd _subrogation AddSubrogationResult
       with
         decision = True

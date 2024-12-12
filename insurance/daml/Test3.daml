@@ -51,8 +51,8 @@ _policyRequest_2 <- submit cust_1
   do exerciseCmd _customer SubscribePolicy
       with
         insurer = insur
-        startDate = (D.date 2023 Jan 1)
-        endDate = (D.date 2024 Jan 1)
+        startDate = (D.date 2020 Jan 1)
+        endDate = (D.date 2023 Jan 1)
         customer = cust_1
 
 -- reject the request

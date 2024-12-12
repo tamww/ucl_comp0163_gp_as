@@ -294,7 +294,7 @@ template ClaimForm
 
         subrogateS <- create SubrogationCase with
           insurer = insurer
-          serviceProvider = subrogationService
+          serviceProvider = police
           date = date
           evidence = evidence
           typeCB = typeCB
@@ -430,6 +430,9 @@ template JuryDecision
           nowTime <- getTime 
           let nowDate = toDateUTC nowTime
           let index = elemIndex judge alreadyVoted
+          debug "lolll"
+          debug index
+          debug "loll"
           assertMsg "This jury has already voted." $ isNone index
           -- assertMsg "The JD session not yet end" ( endDate < nowTime )
           newJD <- create this with
