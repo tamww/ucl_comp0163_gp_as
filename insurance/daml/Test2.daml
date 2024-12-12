@@ -1,0 +1,136 @@
+module Test2 where
+
+--------------------------------------------------------------------------------
+
+import DA.Date as D
+import Daml.Script
+import Main
+
+-------------------------------------------------------------------------------
+----------Test 2: End to End Test (Not Cyberbullying after investigation)------
+
+test2 : Script ()
+test2 = script do
+cust_1 <- allocateParty "Customer_1"
+insur <- allocateParty "Insurance_Company"
+jury_1 <- allocateParty "Jury A"
+jury_2 <- allocateParty "Jury B"
+jury_3 <- allocateParty "Jury C"
+police <- allocateParty "Police"
+subrogationService <- allocateParty "Subrogation Service Provider"
+guiltyPerson <- allocateParty "Person at guilt"
+
+-- create user
+_customer <- submit cust_1
+  do createCmd Customer
+      with
+        user = cust_1
+        userDetails = Userinfo with userID = "CUST001", name = "Julie", email = "julie@test.com"
+
+-- create a policy request
+_policyRequest <- submit cust_1
+  do exerciseCmd _customer SubscribePolicy
+      with
+        insurer = insur
+        startDate = (D.date 2023 Jan 1)
+        endDate = (D.date 2024 Jan 1)
+        customer = cust_1
+
+-- approve the request
+_policyCreated <- submit insur 
+  do exerciseCmd _policyRequest AcceptApplication
+  
+--------- claim process
+-- submit a claim
+_claimRequest <- submit cust_1
+  do exerciseCmd _customer ApplyClaim
+      with
+        insurer = insur
+        customer = cust_1
+        cbPolicy = _policyCreated
+        claimDate = (D.date 2023 Oct 1)
+        evidence = [
+          (Evidence with insurer = insur, description = "I being attacked", time = (D.datetime 2023 Oct 1 16 0 0), proof = "www.test.com"),
+          (Evidence with insurer = insur, description = "I being attacked twice", time = (D.datetime 2023 Oct 2 17 0 0), proof = "www.test2.com")
+          ]
+        typeCB = Personal_Attack
+
+-- accept a claim form and create jury session
+_claimForm <- submit insur
+  do exerciseCmd _claimRequest AcceptClaimRqeuest
+      with
+        cbType = Personal_Attack
+        payAmt = 1.0
+        upfrontPercentage = 0.1
+        jury = [jury_1, jury_2, jury_3]
+        police = [police]
+        subrogationService = [subrogationService]
+
+(_juryDecision, _claimForm_with_Jury) <- submit insur
+  do exerciseCmd _claimForm CreateJuryDecision 
+      with 
+        claimForm = _claimForm
+        duration = 1
+
+-- -- add decision by jury
+_jury_vote_1 <- submit jury_1
+  do exerciseCmd _juryDecision Sign
+      with 
+        signer = jury_1
+        vote = True
+
+_jury_vote_2 <- submit jury_2
+  do exerciseCmd _jury_vote_1 Sign
+      with 
+        signer = jury_2
+        vote = True
+
+_jury_vote_3 <- submit jury_3
+  do exerciseCmd _jury_vote_2 Sign
+      with 
+        signer = jury_3
+        vote = True
+
+-- add final judge decision by either jury or insurer
+_claimForm_with_Jury_decision <- submit insur
+  do exerciseCmd _claimForm_with_Jury FinalJuryDecision
+      with
+        juryDecision = _jury_vote_3
+
+-- fraction payment after jury done decision round or jury time expire
+-- kick start subrograte
+-- kick start investigation
+(_claimForm_initialPayment_subrogation, _initialPayment, _investigation, _subrogation) <- submit insur
+  do exerciseCmd _claimForm_with_Jury_decision InitialPaymentAndSubrogation
+      with 
+        police = police
+        subrogationService = subrogationService
+
+-- combine subrogate and investigation 
+--- if not cyberbullying
+---- request customer to return the upfront
+---- end case
+_completed_investigation <- submit police
+  do exerciseCmd _investigation AddInvestigationResult
+      with
+        decision = False
+
+_completed_subrogation <- submit subrogationService
+  do exerciseCmd _subrogation AddSubrogationResult
+      with
+        decision = True
+        pplAtFault = [guiltyPerson]
+
+(_claimForm_completed, _payment_final, _request_payment_final) <- submit insur
+  do exerciseCmd _claimForm_initialPayment_subrogation UpdateInvestAndSubrogate
+      with
+        investigationIdd = _completed_investigation
+        subrogationIdd = _completed_subrogation
+
+submit insur do exerciseCmd _claimForm_completed EndCase
+
+
+
+return()
+----------Test 2: End -----------------------------------------------
+---------------------------------------------------------------------

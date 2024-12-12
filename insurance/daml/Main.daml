@@ -1,0 +1,549 @@
+{-# LANGUAGE MultiWayIf #-}
+
+module Main where
+-------------------------------------------------------
+-------------------Basic Module------------------------
+import DA.Date as D
+import DA.Time as T
+-- import Daml.Script
+import DA.List (elemIndex, findIndex, (!!), sort, unique)
+import DA.Optional (isNone)
+-- setTime (time (date 2023 Apr 5) 14 30 05)
+-------------------------------------------------------
+
+
+-------------------------------------------------------
+-------------------Basic Data--------------------------
+-- basic enum for cyberbullying type
+data CyberbullyType = NA |Personal_Attack | Offensive_Name_Calling | False_Rumors | Persistent_Monitoring | Physical_Threats | Receive_Unsolicited_Explicit_Images | Share_Explicit_Images deriving (Eq, Show)
+instance Enum CyberbullyType where
+  fromEnum NA = 0
+  fromEnum Personal_Attack = 1
+  fromEnum Offensive_Name_Calling = 2
+  fromEnum False_Rumors = 3
+  fromEnum Persistent_Monitoring = 4
+  fromEnum Physical_Threats = 5
+  fromEnum Receive_Unsolicited_Explicit_Images = 6
+  fromEnum Share_Explicit_Images = 7
+
+  toEnum 1 = Personal_Attack
+  toEnum 2 = Offensive_Name_Calling
+  toEnum 3 = False_Rumors
+  toEnum 4 = Persistent_Monitoring
+  toEnum 5 = Physical_Threats
+  toEnum 6 = Receive_Unsolicited_Explicit_Images
+  toEnum 7 = Share_Explicit_Images
+  toEnum _ = NA
+
+-- basic enum for slashing reason
+data SlashReason = Inactive | Disclose_Evidence | Others deriving (Eq, Show)
+instance Enum SlashReason where
+  fromEnum Inactive = 101
+  fromEnum Disclose_Evidence = 102
+  fromEnum Others = 102
+
+  toEnum 101 = Inactive
+  toEnum 102 = Disclose_Evidence
+  toEnum 103 = Others
+
+-- basic enum for payment reason
+data PaymentType = ZeroPayment | InitialFraction | RemainClaim | PaybackForFalseClaim | Subrogation deriving (Eq, Show)
+instance Enum PaymentType where
+  fromEnum InitialFraction = 201
+  fromEnum RemainClaim = 202
+  fromEnum PaybackForFalseClaim = 204
+  fromEnum Subrogation = 204
+  fromEnum ZeroPayment = 205
+
+  toEnum 201 = InitialFraction
+  toEnum 202 = RemainClaim
+  toEnum 203 = PaybackForFalseClaim
+  toEnum 204 = Subrogation
+  toEnum 205 = ZeroPayment
+
+
+-- userinfo struct
+data Userinfo = Userinfo
+  with
+    userID: Text
+    name: Text
+    email: Text
+  deriving (Eq, Show)
+
+data Evidence = Evidence
+  with
+    insurer: Party
+    description: Text
+    time: Datetime
+    proof: Text
+  deriving (Eq, Show)
+-------------------------------------------------------
+-------------------------------------------------------
+
+--- Template for Customer Contract
+template Customer
+  with
+    user: Party
+    userDetails:Userinfo
+  where
+    signatory user
+
+    -- submit policy application
+    nonconsuming choice SubscribePolicy : ContractId PolicyApplication
+      with
+        insurer: Party
+        startDate: Date
+        endDate: Date
+        customer: Party
+      controller user
+        do 
+          nowTime <- getTime
+          let nowDate = toDateUTC nowTime
+          assertMsg "End date must be later than start date." (startDate < endDate)
+          create PolicyApplication
+            with cBPolicy = CBPolicy with insurer = insurer, owner = customer, startDate, endDate
+
+    -- submit a claim application
+    nonconsuming choice ApplyClaim: ContractId ClaimRequest
+      with
+        insurer: Party
+        customer: Party
+        cbPolicy: ContractId CBPolicy
+        claimDate: Date
+        evidence: [Evidence]
+        typeCB: CyberbullyType
+      controller user
+        do 
+          nowTime <- getTime
+          let nowDate = toDateUTC nowTime
+          -- assertMsg "You cannot apply for future claim for." (claimDate < nowDate)
+          create ClaimRequest
+            with 
+              claimForm = ClaimForm 
+                with 
+                  insurer = insurer
+                  owner = customer
+                  cbPolicy = cbPolicy
+                  date = claimDate
+                  evidence = evidence
+                  typeCB = typeCB
+                  payAmt = 0.0
+                  upfrontPercentage = 0.0
+                  alreadyPaid = 0.0
+                  juryDecisionId = None
+                  juryBoard = []
+                  juryDecision = False
+                  subrogationId = None
+                  subrogationService = []
+                  investigationId = None
+                  police = []
+                  finalDecision = False
+                  pplAtGuilt = []
+                  caseEnd = False
+
+-- invite and reject pattern to determine whether this policy will be created or not
+template PolicyApplication
+  with
+    cBPolicy: CBPolicy
+  where
+    signatory cBPolicy.owner
+    observer cBPolicy.insurer
+    choice AcceptApplication: ContractId CBPolicy
+      controller cBPolicy.insurer
+        do 
+          create cBPolicy
+    choice RejectApplication: ()
+      controller cBPolicy.insurer
+        do return ()
+
+-- invite and reject pattern to determine whether this claim will be processed or not
+template ClaimRequest
+  with 
+    claimForm: ClaimForm
+  where
+    signatory claimForm.owner
+    observer claimForm.insurer
+    choice AcceptClaimRqeuest: ContractId ClaimForm
+      with
+        cbType: CyberbullyType
+        payAmt: Decimal
+        upfrontPercentage: Decimal
+        jury: [Party]
+        subrogationService: [Party]
+        police: [Party]
+      controller claimForm.insurer
+        do 
+          --- check if user has input cyberbully type, otw use the cyberbully tag from the firm
+          if | claimForm.typeCB == NA ->
+                create claimForm 
+                  with 
+                    typeCB = cbType
+                    payAmt = payAmt
+                    upfrontPercentage = upfrontPercentage
+                    juryBoard = jury
+                    subrogationService = subrogationService
+                    police = police
+             | otherwise -> 
+                  create claimForm
+                    with 
+                      payAmt = payAmt
+                      upfrontPercentage = upfrontPercentage
+                      juryBoard = jury
+                      subrogationService = subrogationService
+                      police = police
+    choice RejectClaimRqeuest: ()
+      controller claimForm.insurer
+        do return ()
+
+-- the contract template for insurance policy
+template CBPolicy
+  with 
+    insurer: Party
+    owner: Party
+    startDate: Date
+    endDate: Date
+  where
+    signatory insurer, owner
+
+--- the contract template for claim form
+template ClaimForm
+  with
+    -- basic info
+    insurer: Party
+    owner: Party
+    cbPolicy: ContractId CBPolicy
+    date: Date
+    evidence: [Evidence]
+    typeCB: CyberbullyType
+
+    -- fields for record payment made
+    payAmt: Decimal
+    upfrontPercentage: Decimal
+    alreadyPaid: Decimal
+
+    -- fields for record jury decision
+    juryDecisionId: Optional (ContractId JuryDecision)
+    juryBoard: [Party]
+    juryDecision:  Bool
+
+    -- fields for recording subrogation and investigation results
+    subrogationId: Optional (ContractId SubrogationCase)
+    subrogationService: [Party]
+    investigationId: Optional (ContractId Investigation)
+    police: [Party]
+    finalDecision: Bool
+    pplAtGuilt: [Party]
+
+    -- case state
+    caseEnd: Bool
+
+  where
+    signatory insurer, owner
+    --- create the jury decision session for voting
+    choice CreateJuryDecision : (ContractId JuryDecision, ContractId ClaimForm)
+      with 
+        claimForm: ContractId ClaimForm
+        duration: Int
+      controller insurer
+      do 
+        nowTime <- getTime
+        let endDate_ = T.addRelTime (nowTime) (days duration)
+        juryD <- create JuryDecision 
+          with
+            -- claimForm = claimForm
+            alreadyVoted = []
+            insurer = insurer
+            endDate = endDate_
+            juryParty = juryBoard
+            yesCB = 0
+            noCB = 0
+        claimF <- create this with juryDecisionId = Some juryD
+        return(juryD, claimF)
+
+    --- after all jury votes or pass the deadline, update the Claim form will final jury decision
+    choice FinalJuryDecision: ContractId ClaimForm
+      with
+        juryDecision: ContractId JuryDecision
+      controller insurer
+      do
+        -- check for final voting result
+        jd <- fetch juryDecision
+        assert(sort jd.alreadyVoted ==  sort jd.juryParty) -- check if all vote
+        if | jd.yesCB > jd.noCB ->
+              create this with juryDecision = True
+                -- return(ans)
+            | otherwise ->
+              create this with juryDecision = False
+                -- return(ans)
+    
+    --- to pay the small fraction of claim after jury session and kick start the subrogation and police investigation session at the same time
+    choice InitialPaymentAndSubrogation: (ContractId ClaimForm, ContractId Payment, ContractId Investigation, ContractId SubrogationCase)
+      with 
+        police: Party
+        subrogationService: Party
+      controller insurer
+      do
+        initialPay <- create Payment with 
+          payer = insurer
+          receiver = owner
+          amount = payAmt * upfrontPercentage
+          purpose = InitialFraction
+
+        nowTime <- getTime
+        let nowDate = toDateUTC nowTime
+
+        subrogateS <- create SubrogationCase with
+          insurer = insurer
+          serviceProvider = subrogationService
+          date = date
+          evidence = evidence
+          typeCB = typeCB
+          decision = False
+          completeDate = nowDate
+          complete = False
+          pplAtFault = []
+
+        investigateS <- create Investigation with 
+          insurer = insurer
+          police = police
+          date = date
+          evidence = evidence
+          typeCB = typeCB
+          decision = False
+          completeDate = nowDate
+          complete = False
+          
+        updateClaim <- create this with
+          alreadyPaid = payAmt * upfrontPercentage
+          subrogationId = Some subrogateS
+          investigationId = Some investigateS
+
+        return (updateClaim, initialPay, investigateS, subrogateS)
+    
+
+    --- update the claim for with subrogation and police investigation result
+    choice UpdateInvestAndSubrogate:(ContractId ClaimForm, ContractId Payment, ContractId RequestPayment)
+      with
+        investigationIdd: ContractId Investigation
+        subrogationIdd: ContractId SubrogationCase
+      controller insurer
+      do
+        investigateForm <- fetch investigationIdd
+        subrogationForm <- fetch subrogationIdd
+        assertMsg "Investigation and subrogation not yet compelet" (investigateForm.complete && subrogationForm.complete)
+        if | (investigateForm.decision && subrogationForm.decision) ->
+            do  
+              -- if final decision is true cyberbully case
+              -- update the person at guilt and close case
+              final_form <- create this with 
+                  finalDecision = investigateForm.decision && subrogationForm.decision
+                  pplAtGuilt = subrogationForm.pplAtFault
+                  caseEnd = True
+
+              -- pay the remain claim to users
+              payRemain <- create Payment with
+                  payer = insurer
+                  receiver = owner
+                  amount = payAmt - alreadyPaid
+                  purpose = RemainClaim
+
+              -- submit payment request to the person at guilt
+              requestPay <- create RequestPayment with
+                  requestBy = insurer
+                  payBy = subrogationForm.pplAtFault!!0
+                  amount = payAmt
+                  purpose = Subrogation
+
+              return (final_form, payRemain, requestPay)
+              
+            | otherwise ->
+              do
+              -- if final decision is true cyberbully case
+              -- close case
+                final_form <- create this with 
+                    finalDecision = investigateForm.decision && subrogationForm.decision
+                    pplAtGuilt = subrogationForm.pplAtFault
+                    caseEnd = True
+              -- dummy internal payment
+                payRemain <- create Payment with
+                    payer = insurer
+                    receiver = insurer
+                    amount = 0.0
+                    purpose = ZeroPayment
+              --- request the customers to return the small fraction of payment received before
+                requestPay <- create RequestPayment with
+                    requestBy = insurer
+                    payBy = owner
+                    amount = alreadyPaid
+                    purpose = PaybackForFalseClaim
+
+                return (final_form, payRemain, requestPay)
+              
+    -- archive the case once the case state become end
+    choice EndCase: ()
+      controller insurer
+      do assert(caseEnd)
+    
+  
+-- filter out the juries that not yet vote
+toSign : JuryDecision -> [Party]
+toSign JuryDecision { alreadyVoted, juryParty } = filter (`notElem` alreadyVoted) juryParty
+-- contract template for JuryDecision
+template JuryDecision
+  with
+    alreadyVoted: [Party]
+    juryParty: [Party]
+    insurer: Party
+    endDate: Time
+    yesCB: Int
+    noCB: Int
+  where
+    signatory insurer
+    observer alreadyVoted, juryParty
+    ensure 
+      unique alreadyVoted
+    -- vote by jury
+    choice Sign : (ContractId JuryDecision )
+      with
+        signer : Party
+        vote: Bool
+      controller signer
+        do
+          assert (signer `elem` toSign this)
+          if | vote ->
+                create this with 
+                  alreadyVoted = signer :: alreadyVoted
+                  yesCB = yesCB +1
+              | otherwise ->
+                create this with 
+                  alreadyVoted = signer :: alreadyVoted
+                  noCB = noCB +1
+                
+    -- remove judge not vote and carry out slashing   
+    choice RemoveJudge: (ContractId Slash, ContractId JuryDecision)
+      with
+        judge: Party
+        scaleFactor: Decimal
+        slashDuration: RelTime
+      controller insurer
+        do 
+          nowTime <- getTime 
+          let nowDate = toDateUTC nowTime
+          let index = elemIndex judge alreadyVoted
+          assertMsg "This jury has already voted." $ isNone index
+          -- assertMsg "The JD session not yet end" ( endDate < nowTime )
+          newJD <- create this with
+            juryParty = filter (`notElem` [judge]) juryParty
+          slash <- create Slash with 
+            regulator = insurer
+            beSlashed = judge
+            reason = Inactive
+            scale = scaleFactor
+            slashDuration = slashDuration
+          return(slash, newJD)
+
+      
+-- contract template for Slashing
+template Slash
+  with
+    regulator: Party
+    beSlashed: Party
+    reason: SlashReason
+    scale: Decimal
+    slashDuration: RelTime
+  where
+    signatory regulator
+
+-- contract template for Payment
+template Payment
+  with
+    payer: Party
+    receiver: Party
+    amount: Decimal
+    purpose: PaymentType
+  where
+    signatory payer
+    observer receiver
+    choice AcceptPayment: ()
+      controller receiver
+      do
+        return ()
+
+-- contract template for police Investigation
+template Investigation
+  with
+    insurer: Party
+    police: Party
+    date: Date
+    evidence: [Evidence]
+    typeCB: CyberbullyType
+    decision: Bool
+    completeDate: Date
+    complete: Bool
+  where
+    signatory insurer
+    observer police
+    -- update the investigation result by police
+    choice AddInvestigationResult: ContractId Investigation
+      with 
+        decision: Bool
+      controller police
+      do
+        nowTime <- getTime
+        let nowDate = toDateUTC nowTime
+        ans<- create this with
+          decision = decision
+          completeDate = nowDate
+          complete = True
+
+        return(ans)
+
+-- contract template for subrogation service
+template SubrogationCase
+  with
+    insurer: Party
+    serviceProvider: Party
+    date: Date
+    evidence: [Evidence]
+    typeCB: CyberbullyType
+    decision: Bool
+    completeDate: Date
+    complete: Bool
+    pplAtFault: [Party]
+  where
+    signatory insurer
+    observer serviceProvider
+    -- update the contract with final subrogation result
+    choice AddSubrogationResult: ContractId SubrogationCase
+      with 
+        pplAtFault: [Party]
+        decision: Bool
+      controller serviceProvider
+      do
+        nowTime <- getTime
+        let nowDate = toDateUTC nowTime
+        create this with
+          decision = decision
+          completeDate = nowDate
+          complete = True
+          pplAtFault = pplAtFault
+
+
+-- contract template for RequestPayment
+template RequestPayment
+  with
+    requestBy: Party
+    payBy: Party
+    amount: Decimal
+    purpose: PaymentType
+  where
+    signatory requestBy
+    choice AcceptRequest: ContractId Payment
+      controller payBy
+      do
+        create Payment with
+          payer = payBy
+          receiver = requestBy
+          amount = amount
+          purpose = purpose
+
